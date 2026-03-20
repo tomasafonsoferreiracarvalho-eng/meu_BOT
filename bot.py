@@ -5,6 +5,9 @@ from PIL import Image, ImageDraw, ImageFont, ImageFilter
 import aiohttp
 import io
 import os
+import json
+import time
+import random
 
 # --------------------------
 # CONFIGURAÇÕES
@@ -45,10 +48,37 @@ WELCOME_CHANNEL_ID = 1483763425296515155
 
 intents = discord.Intents.default()
 intents.members = True
-intents.message_content = False
+intents.message_content = True  # para o on_message funcionar bem
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+# --------------------------
+# SISTEMA DE XP E NÍVEIS
+# --------------------------
+
+MAX_LEVEL = 100
+DATA_FILE = "xp_data.json"
+
+# Estrutura: { user_id: {"xp": int, "level": int} }
+user_data = {}
+
+def load_data():
+    global user_data
+    try:
+        with open(DATA_FILE, "r") as f:
+            user_data = json.load(f)
+    except FileNotFoundError:
+        user_data = {}
+
+def save_data():
+    with open(DATA_FILE, "w") as f:
+        json.dump(user_data, f, indent=4)
+
+def xp_needed(level):
+    return int(50 * (level ** 1.5) + 100)
+
+xp_cooldown = {}
+COOLDOWN_SECONDS = 10
 
 # --------------------------
 # EVENTO ON_READY
@@ -56,13 +86,13 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 @bot.event
 async def on_ready():
+    load_data()
     print(f"Bot ligado como {bot.user}")
     try:
         synced = await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
         print(f"Slash commands sincronizados: {len(synced)}")
     except Exception as e:
         print("Erro ao sincronizar:", e)
-
 
 # --------------------------
 # BOAS-VINDAS COM IMAGEM
@@ -122,7 +152,6 @@ async def gerar_boas_vindas(member):
 
     return buffer
 
-
 @bot.event
 async def on_member_join(member):
     canal = bot.get_channel(WELCOME_CHANNEL_ID)
@@ -135,7 +164,6 @@ async def on_member_join(member):
         content=f"👋 **Bem-vindo, {member.mention}!**",
         file=discord.File(imagem, filename="welcome.png")
     )
-
 
 # --------------------------
 # MENU DE CURSOS
@@ -209,12 +237,10 @@ class CursoSelect(discord.ui.Select):
             f"Curso definido para **{role.name}**. Bem-vindo!", ephemeral=True
         )
 
-
 class CursoView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
         self.add_item(CursoSelect())
-
 
 @bot.tree.command(name="cursos", description="Envia o menu de escolha de curso", guild=discord.Object(id=GUILD_ID))
 async def cursos(interaction: discord.Interaction):
@@ -223,7 +249,6 @@ async def cursos(interaction: discord.Interaction):
         "Escolhe o teu curso para entrares no servidor:",
         view=view
     )
-
 
 # --------------------------
 # MENU DE ANOS
@@ -280,12 +305,10 @@ class AnoSelect(discord.ui.Select):
             f"Ano definido para **{role.name}**.", ephemeral=True
         )
 
-
 class AnoView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
         self.add_item(AnoSelect())
-
 
 @bot.tree.command(name="anos", description="Escolhe o teu ano", guild=discord.Object(id=GUILD_ID))
 async def anos(interaction: discord.Interaction):
@@ -295,6 +318,121 @@ async def anos(interaction: discord.Interaction):
         view=view
     )
 
+# --------------------------
+# SISTEMA DE XP: ON_MESSAGE
+# --------------------------
+
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+
+    user_id = str(message.author.id)
+    now = time.time()
+
+    # Cooldown anti-spam
+    if user_id in xp_cooldown and now - xp_cooldown[user_id] < COOLDOWN_SECONDS:
+        return
+
+    xp_cooldown[user_id] = now
+
+    if user_id not in user_data:
+        user_data[user_id] = {"xp": 0, "level": 1}
+
+    xp_gain = random.randint(5, 15)
+    user_data[user_id]["xp"] += xp_gain
+
+    xp_total = user_data[user_id]["xp"]
+    level = user_data[user_id]["level"]
+
+    if level < MAX_LEVEL and xp_total >= xp_needed(level):
+        user_data[user_id]["level"] += 1
+        user_data[user_id]["xp"] = 0
+
+        await message.channel.send(
+            f"🎉 **{message.author.display_name} subiu para o nível {level + 1}!**"
+        )
+
+    save_data()
+    await bot.process_commands(message)
+
+# --------------------------
+# /rank — CARTÃO VISUAL
+# --------------------------
+
+@bot.tree.command(name="rank", description="Mostra o teu cartão de nível", guild=discord.Object(id=GUILD_ID))
+async def rank(interaction: discord.Interaction):
+    user_id = str(interaction.user.id)
+
+    if user_id not in user_data:
+        user_data[user_id] = {"xp": 0, "level": 1}
+
+    xp = user_data[user_id]["xp"]
+    level = user_data[user_id]["level"]
+    xp_next = xp_needed(level)
+
+    # Criar imagem base
+    card = Image.new("RGB", (600, 200), (30, 30, 30))
+    draw = ImageDraw.Draw(card)
+
+    # Avatar
+    avatar_url = interaction.user.avatar.url if interaction.user.avatar else interaction.user.default_avatar.url
+    async with aiohttp.ClientSession() as session:
+        async with session.get(avatar_url) as resp:
+            avatar_bytes = await resp.read()
+    avatar = Image.open(io.BytesIO(avatar_bytes)).resize((150, 150))
+    card.paste(avatar, (25, 25))
+
+    # Texto
+    font = ImageFont.truetype("arial.ttf", 24)
+    draw.text((200, 40), f"{interaction.user.display_name}", fill="white", font=font)
+    draw.text((200, 80), f"Nível: {level}/{MAX_LEVEL}", fill="white", font=font)
+    draw.text((200, 120), f"XP: {xp}/{xp_next}", fill="white", font=font)
+
+    # Barra de progresso
+    progress = int((xp / xp_next) * 300) if xp_next > 0 else 0
+    draw.rectangle((200, 160, 200 + progress, 180), fill=(0, 200, 255))
+
+    buffer = io.BytesIO()
+    card.save(buffer, format="PNG")
+    buffer.seek(0)
+
+    await interaction.response.send_message(file=discord.File(buffer, "rank.png"))
+
+# --------------------------
+# /ranktop10 — TOP 10
+# --------------------------
+
+@bot.tree.command(name="ranktop10", description="Mostra o top 10 global", guild=discord.Object(id=GUILD_ID))
+async def ranktop10(interaction: discord.Interaction):
+
+    if not user_data:
+        await interaction.response.send_message("Ainda não há dados de XP.", ephemeral=True)
+        return
+
+    top = sorted(
+        user_data.items(),
+        key=lambda x: (x[1]["level"], x[1]["xp"]),
+        reverse=True
+    )[:10]
+
+    embed = discord.Embed(
+        title="🏆 Top 10 — Ranking Global",
+        color=0xffd700
+    )
+
+    pos = 1
+    for uid, data in top:
+        user = interaction.guild.get_member(int(uid))
+        nome = user.display_name if user else f"User {uid}"
+        embed.add_field(
+            name=f"#{pos} — {nome}",
+            value=f"Nível {data['level']} • {data['xp']} XP",
+            inline=False
+        )
+        pos += 1
+
+    await interaction.response.send_message(embed=embed)
 
 # --------------------------
 # INICIAR O BOT
