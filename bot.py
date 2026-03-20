@@ -355,12 +355,19 @@ async def on_message(message):
     await bot.process_commands(message)
 
 # --------------------------
-# /rank — CARTÃO VISUAL
+# /rank — ULTRA IPT PARA TI, SIMPLES PARA OUTROS
 # --------------------------
 
-@bot.tree.command(name="rank", description="Mostra o teu cartão de nível", guild=discord.Object(id=GUILD_ID))
-async def rank(interaction: discord.Interaction):
-    user_id = str(interaction.user.id)
+@bot.tree.command(
+    name="rank",
+    description="Mostra o teu rank ou o de outro utilizador",
+    guild=discord.Object(id=GUILD_ID)
+)
+@app_commands.describe(user="Escolhe um utilizador (opcional)")
+async def rank(interaction: discord.Interaction, user: discord.Member = None):
+
+    alvo = user or interaction.user
+    user_id = str(alvo.id)
 
     if user_id not in user_data:
         user_data[user_id] = {"xp": 0, "level": 1}
@@ -369,29 +376,94 @@ async def rank(interaction: discord.Interaction):
     level = user_data[user_id]["level"]
     xp_next = xp_needed(level)
 
-    card = Image.new("RGB", (600, 200), (30, 30, 30))
-    draw = ImageDraw.Draw(card)
+    # ---------------------------------------------------
+    # CASO 1 → O UTILIZADOR PEDIU O SEU PRÓPRIO RANK
+    # ---------------------------------------------------
+    if alvo.id == interaction.user.id:
 
-    avatar_url = interaction.user.avatar.url if interaction.user.avatar else interaction.user.default_avatar.url
-    async with aiohttp.ClientSession() as session:
-        async with session.get(avatar_url) as resp:
-            avatar_bytes = await resp.read()
-    avatar = Image.open(io.BytesIO(avatar_bytes)).resize((150, 150))
-    card.paste(avatar, (25, 25))
+        # Criar cartão ULTRA IPT
+        card = Image.new("RGB", (800, 300), (20, 20, 20))
+        draw = ImageDraw.Draw(card)
 
-    font = ImageFont.load_default()
-    draw.text((200, 40), f"{interaction.user.display_name}", fill="white", font=font)
-    draw.text((200, 80), f"Nível: {level}/{MAX_LEVEL}", fill="white", font=font)
-    draw.text((200, 120), f"XP: {xp}/{xp_next}", fill="white", font=font)
+        # Fundo com gradiente diagonal
+        for i in range(800):
+            cor = (
+                20 + int(i * 0.03),
+                20 + int(i * 0.02),
+                20 + int(i * 0.01)
+            )
+            draw.line([(i, 0), (0, i)], fill=cor)
 
-    progress = int((xp / xp_next) * 300) if xp_next > 0 else 0
-    draw.rectangle((200, 160, 200 + progress, 180), fill=(0, 200, 255))
+        # Avatar circular
+        avatar_url = alvo.avatar.url if alvo.avatar else alvo.default_avatar.url
+        async with aiohttp.ClientSession() as session:
+            async with session.get(avatar_url) as resp:
+                avatar_bytes = await resp.read()
 
-    buffer = io.BytesIO()
-    card.save(buffer, format="PNG")
-    buffer.seek(0)
+        avatar = Image.open(io.BytesIO(avatar_bytes)).resize((180, 180)).convert("RGBA")
 
-    await interaction.response.send_message(file=discord.File(buffer, "rank.png"))
+        mask = Image.new("L", (180, 180), 0)
+        mask_draw = ImageDraw.Draw(mask)
+        mask_draw.ellipse((0, 0, 180, 180), fill=255)
+
+        avatar_circ = Image.new("RGBA", (180, 180))
+        avatar_circ.paste(avatar, (0, 0), mask)
+
+        # Sombra
+        shadow = Image.new("RGBA", (200, 200), (0, 0, 0, 120))
+        shadow_mask = Image.new("L", (200, 200), 0)
+        shadow_draw = ImageDraw.Draw(shadow_mask)
+        shadow_draw.ellipse((0, 0, 200, 200), fill=255)
+        shadow = shadow.filter(ImageFilter.GaussianBlur(10))
+
+        card.paste(shadow, (40, 40), shadow_mask)
+        card.paste(avatar_circ, (50, 50), avatar_circ)
+
+        # Texto
+        font_big = ImageFont.load_default()
+        font_small = ImageFont.load_default()
+
+        draw.text((260, 50), f"{alvo.display_name}", fill="white", font=font_big)
+
+        draw.rounded_rectangle((260, 90, 380, 130), radius=10, fill=(255, 215, 0))
+        draw.text((270, 100), f"Nível {level}", fill="black", font=font_small)
+
+        draw.text((260, 150), f"XP: {xp}/{xp_next}", fill="white", font=font_small)
+
+        # Barra XP
+        bar_x = 260
+        bar_y = 190
+        bar_w = 450
+        bar_h = 25
+
+        progress = int((xp / xp_next) * bar_w)
+
+        for i in range(progress):
+            cor = (255, 215 - int(i * 0.1), 0)
+            draw.line([(bar_x + i, bar_y), (bar_x + i, bar_y + bar_h)], fill=cor)
+
+        draw.rectangle((bar_x, bar_y, bar_x + bar_w, bar_y + bar_h), outline="white")
+
+        buffer = io.BytesIO()
+        card.save(buffer, format="PNG")
+        buffer.seek(0)
+
+        await interaction.response.send_message(
+            file=discord.File(buffer, "rank_ultra_ipt.png")
+        )
+        return
+
+    # ---------------------------------------------------
+    # CASO 2 → O UTILIZADOR PEDIU O RANK DE OUTRA PESSOA
+    # ---------------------------------------------------
+    embed = discord.Embed(
+        title=f"🏅 Rank de {alvo.display_name}",
+        color=0xffd700
+    )
+    embed.add_field(name="Nível", value=str(level), inline=True)
+    embed.add_field(name="XP", value=f"{xp}/{xp_next}", inline=True)
+
+    await interaction.response.send_message(embed=embed)
 
 # --------------------------
 # /ranktop10 — TOP 10
