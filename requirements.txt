@@ -4,6 +4,5 @@ aiohttp
 beautifulsoup4
 pillow
 requests
-json
 time
 random
