@@ -48,7 +48,7 @@ WELCOME_CHANNEL_ID = 1483763425296515155
 
 intents = discord.Intents.default()
 intents.members = True
-intents.message_content = True  # para o on_message funcionar bem
+intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -59,7 +59,6 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 MAX_LEVEL = 100
 DATA_FILE = "xp_data.json"
 
-# Estrutura: { user_id: {"xp": int, "level": int} }
 user_data = {}
 
 def load_data():
@@ -136,7 +135,7 @@ async def gerar_boas_vindas(member):
         f"Bem-vindo ao {member.guild.name}! Usa e abusa!"
     )
 
-    font = ImageFont.truetype("arial.ttf", 32)
+    font = ImageFont.load_default()
     draw.text((40, 310), texto, font=font, fill=(255, 255, 255))
 
     avatar_circ = avatar.resize((200, 200))
@@ -330,7 +329,6 @@ async def on_message(message):
     user_id = str(message.author.id)
     now = time.time()
 
-    # Cooldown anti-spam
     if user_id in xp_cooldown and now - xp_cooldown[user_id] < COOLDOWN_SECONDS:
         return
 
@@ -371,11 +369,9 @@ async def rank(interaction: discord.Interaction):
     level = user_data[user_id]["level"]
     xp_next = xp_needed(level)
 
-    # Criar imagem base
     card = Image.new("RGB", (600, 200), (30, 30, 30))
     draw = ImageDraw.Draw(card)
 
-    # Avatar
     avatar_url = interaction.user.avatar.url if interaction.user.avatar else interaction.user.default_avatar.url
     async with aiohttp.ClientSession() as session:
         async with session.get(avatar_url) as resp:
@@ -383,13 +379,11 @@ async def rank(interaction: discord.Interaction):
     avatar = Image.open(io.BytesIO(avatar_bytes)).resize((150, 150))
     card.paste(avatar, (25, 25))
 
-    # Texto
-    font = ImageFont.truetype("arial.ttf", 24)
+    font = ImageFont.load_default()
     draw.text((200, 40), f"{interaction.user.display_name}", fill="white", font=font)
     draw.text((200, 80), f"Nível: {level}/{MAX_LEVEL}", fill="white", font=font)
     draw.text((200, 120), f"XP: {xp}/{xp_next}", fill="white", font=font)
 
-    # Barra de progresso
     progress = int((xp / xp_next) * 300) if xp_next > 0 else 0
     draw.rectangle((200, 160, 200 + progress, 180), fill=(0, 200, 255))
 
